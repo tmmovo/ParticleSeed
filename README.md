@@ -125,7 +125,6 @@ function generateColorScheme(rand) {
 
 - Three.js开发团队
 - FNV哈希算法作者
-- 所有参与测试的用户
 ```
 
 该README包含：
