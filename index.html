@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>粒子种子动画</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        #controlPanel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0,0,0,0.7);
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div id="controlPanel">
+        <input type="text" id="userInput" placeholder="输入内容" style="width: 200px;" value="Hello你好\(@^0^@)/">
+        <button onclick="generateParticles()">生成</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let scene, camera, renderer;
+        let mainParticles, trailParticles;
+        const PARTICLE_COUNT = 800;
+        const TRAIL_LENGTH = 5;
+        const particleHistories = [];
+        let seedColors = []; // 存储每个粒子的基础颜色
+
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+            camera.position.z = 150;
+        }
+
+        function stringToSeed(str) {
+            let hash = 0x811C9DC5;
+            for (let i = 0; i < str.length; i++) {
+                hash ^= str.charCodeAt(i);
+                hash = (hash * 0x01000193) & 0xFFFFFFFF;
+            }
+            return hash;
+        }
+
+        class SeededRandom {
+            constructor(seed) {
+                this.seed = seed >>> 0;
+            }
+            next() {
+                this.seed = (this.seed * 48271) % 2147483647;
+                return this.seed / 2147483647;
+            }
+        }
+
+        function createParticles(seed) {
+            const rand = new SeededRandom(seed);
+            seedColors = []; // 重置颜色存储
+
+            // 主粒子系统
+            const mainGeo = new THREE.BufferGeometry();
+            const mainPositions = new Float32Array(PARTICLE_COUNT * 3);
+            const mainColors = new Float32Array(PARTICLE_COUNT * 3);
+
+            // 拖尾系统
+            const trailGeo = new THREE.BufferGeometry();
+            const trailPositions = new Float32Array(PARTICLE_COUNT * TRAIL_LENGTH * 3);
+            const trailColors = new Float32Array(PARTICLE_COUNT * TRAIL_LENGTH * 3);
+
+            // 初始化粒子和颜色
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                
+                // 主粒子位置
+                mainPositions[i3] = (rand.next() - 0.5) * 200;
+                mainPositions[i3+1] = (rand.next() - 0.5) * 200;
+                mainPositions[i3+2] = (rand.next() - 0.5) * 200;
+
+                // 主粒子颜色（HSV转RGB）
+                const hue = rand.next();
+                const saturation = 0.8;
+                const value = 0.8;
+                const rgb = hsvToRgb(hue, saturation, value);
+                mainColors[i3] = rgb.r;
+                mainColors[i3+1] = rgb.g;
+                mainColors[i3+2] = rgb.b;
+                seedColors.push({r: rgb.r, g: rgb.g, b: rgb.b});
+
+                // 初始化拖尾
+                for (let t = 0; t < TRAIL_LENGTH; t++) {
+                    const tIndex = (i * TRAIL_LENGTH + t) * 3;
+                    trailPositions[tIndex] = mainPositions[i3];
+                    trailPositions[tIndex+1] = mainPositions[i3+1];
+                    trailPositions[tIndex+2] = mainPositions[i3+2];
+                    
+                    // 拖尾颜色（使用主粒子颜色并降低透明度）
+                    const alpha = 1 - t/TRAIL_LENGTH;
+                    trailColors[tIndex] = rgb.r * alpha;
+                    trailColors[tIndex+1] = rgb.g * alpha;
+                    trailColors[tIndex+2] = rgb.b * alpha;
+                }
+            }
+
+            // 设置几何体属性
+            mainGeo.setAttribute('position', new THREE.BufferAttribute(mainPositions, 3));
+            mainGeo.setAttribute('color', new THREE.BufferAttribute(mainColors, 3));
+            
+            trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+            trailGeo.setAttribute('color', new THREE.BufferAttribute(trailColors, 3));
+
+            // 主粒子材质
+            const mainMat = new THREE.PointsMaterial({
+                size: 0.8,
+                vertexColors: true,
+                transparent: true,
+                opacity: 1.0,
+                depthWrite: false
+            });
+
+            // 拖尾材质
+            const trailMat = new THREE.PointsMaterial({
+                size: 0.6,
+                vertexColors: true,
+                transparent: true,
+                opacity: 1.0,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending
+            });
+
+            return {
+                main: new THREE.Points(mainGeo, mainMat),
+                trail: new THREE.Points(trailGeo, trailMat)
+            };
+        }
+
+        function generateParticles() {
+            const input = document.getElementById('userInput').value;
+            const seed = stringToSeed(input);
+
+            // 清除旧粒子
+            if (mainParticles) {
+                scene.remove(mainParticles);
+                scene.remove(trailParticles);
+                mainParticles.geometry.dispose();
+                trailParticles.geometry.dispose();
+            }
+
+            // 初始化历史记录
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                particleHistories[i] = [];
+            }
+
+            // 创建新粒子
+            const particles = createParticles(seed);
+            mainParticles = particles.main;
+            trailParticles = particles.trail;
+            scene.add(mainParticles);
+            scene.add(trailParticles);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (mainParticles && trailParticles) {
+                const mainPos = mainParticles.geometry.attributes.position.array;
+                const trailPos = trailParticles.geometry.attributes.position.array;
+                const trailCol = trailParticles.geometry.attributes.color.array;
+                const time = Date.now() * 0.001;
+
+                // 更新主粒子位置并记录历史
+                for (let i = 0; i < PARTICLE_COUNT; i++) {
+                    const i3 = i * 3;
+                    const phase = (i % 100) * 0.1;
+                    
+                    // 记录当前最新位置
+                    particleHistories[i].unshift({
+                        x: mainPos[i3],
+                        y: mainPos[i3+1],
+                        z: mainPos[i3+2]
+                    });
+
+                    // 保持历史长度
+                    if (particleHistories[i].length > TRAIL_LENGTH) {
+                        particleHistories[i].pop();
+                    }
+
+                    // 主粒子运动
+                    mainPos[i3] += Math.sin(time*1.2 + phase) * 0.15;
+                    mainPos[i3+1] += Math.cos(time*1.0 + phase) * 0.15;
+                    mainPos[i3+2] += Math.sin(time*0.8 + phase) * 0.15;
+                }
+
+                // 更新拖尾位置和颜色
+                for (let i = 0; i < PARTICLE_COUNT; i++) {
+                    const baseColor = seedColors[i];
+                    
+                    for (let t = 0; t < TRAIL_LENGTH; t++) {
+                        const history = particleHistories[i][t];
+                        const tIndex = (i * TRAIL_LENGTH + t) * 3;
+                        
+                        if (history) {
+                            trailPos[tIndex] = history.x;
+                            trailPos[tIndex+1] = history.y;
+                            trailPos[tIndex+2] = history.z;
+                        }
+                        
+                        // 更新颜色透明度
+                        const alpha = 1 - t/TRAIL_LENGTH;
+                        trailCol[tIndex] = baseColor.r * alpha;
+                        trailCol[tIndex+1] = baseColor.g * alpha;
+                        trailCol[tIndex+2] = baseColor.b * alpha;
+                    }
+                }
+
+                mainParticles.geometry.attributes.position.needsUpdate = true;
+                trailParticles.geometry.attributes.position.needsUpdate = true;
+                trailParticles.geometry.attributes.color.needsUpdate = true;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // HSV转RGB函数
+        function hsvToRgb(h, s, v) {
+            let r, g, b;
+            const i = Math.floor(h * 6);
+            const f = h * 6 - i;
+            const p = v * (1 - s);
+            const q = v * (1 - f * s);
+            const t = v * (1 - (1 - f) * s);
+
+            switch(i % 6){
+                case 0: r = v; g = t; b = p; break;
+                case 1: r = q; g = v; b = p; break;
+                case 2: r = p; g = v; b = t; break;
+                case 3: r = p; g = q; b = v; break;
+                case 4: r = t; g = p; b = v; break;
+                case 5: r = v; g = p; b = q; break;
+            }
+
+            return { r: r || 0, g: g || 0, b: b || 0 };
+        }
+
+        // 初始化
+        initThree();
+        generateParticles();
+        animate();
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
